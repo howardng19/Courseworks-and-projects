@@ -1,0 +1,1413 @@
+---
+title: "Strongstorm"
+output: html_document
+date: "2022-10-20"
+---
+
+//////////////////////////////// LIBRARY, DATA READING, DATA FRAMES AND SUMMARY DATA FRAME ////////////////////////////////
+```{r, include = FALSE} 
+#Load packages
+pacman::p_load(data.table, modeest, dplyr, corrplot, tidyverse, magrittr, ggplot2, leaflet, factoextra, patchwork, caTools, caret, randomForest, MultivariateRandomForest, MASS, pls, AICcmodavg, flexmix, knitr, broom, kableExtra, modelsummary, mltools, Metrics, e1071, PerformanceAnalytics, ggcorrplot, plyr, car, sae, ranger, ROCR, kernlab, tidymodels, rsample, doParallel, cvms)
+
+set.seed(52)
+```
+
+```{r, include = FALSE}
+#reading all csv files with fread
+day <- fread("hurricane_data/daystore.csv")
+hour <- fread("hurricane_data/hourstore.csv")
+month <- fread("hurricane_data/monthstore.csv")
+year <- fread("hurricane_data/yearstore.csv")
+latitude <- fread("hurricane_data/latstore.csv")
+longitude <- fread("hurricane_data/longstore.csv")
+pressure <- fread("hurricane_data/pstore.csv")
+shear <- fread("hurricane_data/shearstore.csv")
+speed <- fread("hurricane_data/vstore.csv")
+potential <- fread("hurricane_data/vpstore.csv")
+```
+
+```{r, include = FALSE}
+#transposing the pressure and year tables to match the dimensions for all csv files 
+day <- as.data.table(t(as.matrix(day)))
+hour <- as.data.table(t(as.matrix(hour)))
+month <- as.data.table(t(as.matrix(month)))
+latitude <- as.data.table(t(as.matrix(latitude)))
+longitude <- as.data.table(t(as.matrix(longitude)))
+shear <- as.data.table(t(as.matrix(shear)))
+speed <- as.data.table(t(as.matrix(speed)))
+potential <- as.data.table(t(as.matrix(potential)))
+```
+
+```{r, include = FALSE}
+day[day == 0] <- NA
+hour[hour == 0] <- NA
+month[month == 0] <- NA
+year[year == 0] <- NA
+latitude[latitude == 0] <- NA
+longitude[longitude == 0] <- NA
+speed[speed == 0] <- NA
+potential[potential == 0] <- NA
+shear[shear == 0] <- NA
+pressure[pressure == 0] <- NA
+```
+
+
+## Summary function
+
+```{r, include = FALSE}
+#function for getting statistical summary from data
+#Usage: first argument be the name of the target dataframe, followed by up to 8 string arguments from {"mode", "min", "max", "mean" (or "avg"), "sd", "q1", "q3", "median" (or "q2") or "range}
+get_stat <- function(x, ...){
+    m <- matrix(NA, nrow = nrow(x))
+    result_df <- data.frame(m)
+    result_df <- subset(result_df, select = -c(m))
+    for (i in list(...)){
+        if (tolower(i) == "mode"){
+            col <- apply(x, 1, mfv, na_rm = TRUE)
+            col <- sapply(col, "[[", 1)
+            name = paste0(deparse(substitute(x)), "_", i)
+            result_df[name] <- col
+        }
+        else if (tolower(i) == "min"){
+            col <- apply(x, 1, min, na.rm = TRUE)
+            name = paste0(deparse(substitute(x)), "_", i)
+            result_df[name] <- col
+        }
+        else if (tolower(i) == "max"){
+            col <- apply(x, 1, max, na.rm = TRUE)
+            name = paste0(deparse(substitute(x)), "_", i)
+            result_df[name] <- col
+        }
+        else if (tolower(i) == "mean" || tolower(i) == "avg"){
+            col <- apply(x, 1, mean, na.rm = TRUE)
+            name = paste0(deparse(substitute(x)), "_", i)
+            result_df[name] <- col
+        }
+        else if (tolower(i) == "sd"){
+            col <- apply(x, 1, sd, na.rm = TRUE)
+            name = paste0(deparse(substitute(x)), "_", i)
+            result_df[name] <- col
+        }
+        else if (tolower(i) == "q1"){
+            col_1 <- apply(x, 1, quantile, na.rm = TRUE)
+            col = col_1[2,]
+            name = paste0(deparse(substitute(x)), "_", i)
+            result_df[name] <- col
+        }
+        else if (tolower(i) == "q3"){
+            col_1 <- apply(x, 1, quantile, na.rm = TRUE)
+            col = col_1[4,]
+            name = paste0(deparse(substitute(x)), "_", i)
+            result_df[name] <- col
+        }
+        else if (tolower(i) == "q2" || tolower(i) == "median"){
+            col_1 <- apply(x, 1, quantile, na.rm = TRUE)
+            col = col_1[3,]
+            name = paste0(deparse(substitute(x)), "_", i)
+            result_df[name] <- col
+        }
+        else if (tolower(i) == "range"){
+            col_1 <- apply(x, 1, min, na.rm = TRUE)
+            col_2 <- apply(x, 1, max, na.rm = TRUE)
+            col <- col_2 - col_1
+            name = paste0(deparse(substitute(x)), "_", i)
+            result_df[name] <- col
+        }
+    }
+    
+    df_name = paste0(deparse(substitute(x)), "_", "summary.csv")
+    return (result_df)
+}
+```
+
+## Filter function
+
+```{r, include = FALSE}
+get_ID <- function(df, column, op, value, ...){
+  arguments <- list(...)
+  f <- match.fun(match.arg(op, choices = c('<', '>', '==', '>=', '<=')))
+  
+  if(length(arguments) == 0){
+    df %>%
+    add_rownames() %>%
+    filter(f(!!sym(column),value)) %>%
+    `[[`("rowname") %>%
+    as.numeric() -> output
+    return (output)
+  }
+  else if(length(arguments) %% 3 != 0){
+    print("Error: The number of input arguments are wrong")
+  }
+  else{
+    df %>%
+    add_rownames() %>%
+    filter(f(!!sym(column),value)) -> temp
+    for(i in seq(from=1, to=length(arguments), by=3)){
+      f <- match.fun(match.arg(arguments[[i+1]], choices = c('<', '>', '==', '>=', '<=')))
+       
+      temp %>%
+      filter(f(!!sym(arguments[[i]]), arguments[[i+2]])) -> temp
+    }
+    temp %>%
+    `[[`("rowname") %>%
+    as.numeric() -> output 
+    return (output)
+  }
+}
+```
+
+
+# Summary dataframe
+
+```{r, include = FALSE}
+speed_sum <- get_stat(speed, "max")
+
+latitude$storm <- seq.int(nrow(latitude))
+longitude$storm <- seq.int(nrow(longitude))
+
+highspeed_ID <- get_ID(speed_sum, "speed_max", ">=", 50)
+maximum_speed <- speed_sum$speed_max[highspeed_ID]
+
+duration <- vector(mode = "integer", length = length(highspeed_ID))
+```
+
+
+```{r}
+month <- month[highspeed_ID,]
+year <- year[highspeed_ID,]
+latitude <- latitude[highspeed_ID,]
+longitude <- longitude[highspeed_ID,]
+pressure <- pressure[highspeed_ID,]
+shear <- shear[highspeed_ID,]
+speed <- speed[highspeed_ID,]
+potential <- potential[highspeed_ID,]
+
+#Making a summary df
+# month_sum <- get_stat(month, "mode")
+# year_sum <- get_stat(year, "mode")
+# latitude_sum <- get_stat(latitude, "mean", "min", "max", "sd", "range")
+# longitude_sum <- get_stat(longitude, "mean", "min", "max","sd", "range")
+# potential_sum <- get_stat(potential, "mean", "min", "max", "sd", "range")
+# speed_sum <- get_stat(speed, "mean", "min", "max", "sd", "range")
+# pressure_sum <- get_stat(pressure, "mean", "min", "max", "sd", "range")
+# shear_sum <- get_stat(shear, "mean", "min", "max", "sd", "range")
+# 
+# summary_df <- cbind(month_sum, year_sum, latitude_sum, longitude_sum, speed_sum, potential_sum, pressure_sum, shear_sum, duration)
+```
+
+```{r}
+idx_min <- 999
+idx_max <- 0
+
+for (i in 1:nrow(speed)){
+    a <- which(speed[i] >= 50)[1]
+    duration[i] <- a * 2 
+    if (a > idx_max){
+        idx_max <- a
+    }
+    if (a < idx_min){
+        idx_min <- a
+    }
+}
+```
+
+
+```{r}
+extract <- function(df, speed, idx_max){
+    new_df <- data.frame()
+    a <- which(speed[1] >= 50)[1]
+    df_i <- as.vector(df[1, 1:a], mode = "numeric")
+    length(df_i) <- idx_max
+    a <- which(speed[2] >= 50)[1]
+    df_i2 <- as.vector(df[2, 1:a], mode = "numeric")
+    length(df_i2) <- idx_max
+    new_df <- rbind(df_i, df_i2)
+    
+    for (i in 3:nrow(df)){
+        a <- which(speed[i] >= 50)[1]
+        df_i <- as.vector(df[i, 1:a], mode = "numeric")
+        length(df_i) <- idx_max
+        new_df <- rbind(new_df, df_i)
+    }
+    rownames(new_df) <- NULL
+    new_df <- as.data.frame(new_df)
+    return (new_df)
+}
+
+month_l <- extract(month, speed, idx_max)
+year_l <- year
+latitude_l <- extract(latitude, speed, idx_max)
+longitude_l <- extract(longitude, speed, idx_max)
+pressure_l <- extract(pressure, speed, idx_max)
+shear_l <- extract(shear, speed, idx_max)
+speed_l <- extract(speed, speed, idx_max)
+potential_l <- extract(potential, speed, idx_max)
+```
+
+```{r}
+#Making a summary df
+month_l_sum <- get_stat(month_l, "mode")
+year_l_sum <- get_stat(year_l, "mode")
+latitude_l_sum <- get_stat(latitude_l, "mean", "min", "max", "sd", "range")
+longitude_l_sum <- get_stat(longitude_l, "mean", "min", "max","sd", "range")
+potential_l_sum <- get_stat(potential_l, "mean", "min", "max", "sd", "range")
+speed_l_sum <- get_stat(speed_l, "mean", "min", "max", "sd", "range")
+pressure_l_sum <- get_stat(pressure_l, "mean", "min", "max", "sd", "range")
+shear_l_sum <- get_stat(shear_l, "mean", "min", "max", "sd", "range")
+
+summary_l_df <- cbind(month_l_sum, year_l_sum, latitude_l_sum, longitude_l_sum, potential_l_sum, pressure_l_sum, shear_l_sum, duration)
+
+write.csv(summary_l_df,"summary_l_df.csv", row.names = FALSE)
+```
+
+
+//////////////////////////////// LIBRARY, DATA READING, DATA FRAMES AND SUMMARY DATA FRAME ////////////////////////////////
+
+
+//////////////////////////////// EDA ////////////////////////////////
+
+```{r}
+data2 <- cbind(subset(summary_l_df, select = c("latitude_l_mean","latitude_l_min","latitude_l_max","longitude_l_mean","longitude_l_min",
+                                               "longitude_l_max","potential_l_min","potential_l_max","pressure_l_min","shear_l_mean",
+                                               "shear_l_min","shear_l_max","duration")), maximum_speed)
+pdf(file = "submit/Project progress report B - final/Figure/corrplot.pdf", width = 8, height = 8/1.4)
+ggcorrplot(cor(data2), 
+         method = "circle",
+         outline.color = "black",
+         title = "Correlation plot of variables in the data",
+         legend.title = "Correlation",
+         lab_size = 6)
+
+dev.off()
+```
+
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/uni-maxspeed.pdf", width = 8, height = 8/1.4)
+v <- ggplot(speed_sum, aes(x = speed_max)) + 
+    geom_histogram(binwidth = 5, fill = 'skyblue') + 
+    labs(title = "Distribution of maximum wind speed", y = "Count", x = "Maximum wind speed (knots)")
+v
+dev.off()
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/uni-minpress.pdf", width = 8, height = 8/1.4)
+p <- ggplot(pressure_l_sum, aes(x = pressure_l_min)) + 
+    geom_histogram(binwidth = 0.1, fill = 'orange') + 
+    labs(title = "Distribution of minimum pressure", y = "Count", x = "Minimum pressure (mb)")
+
+p
+dev.off()
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/uni-duration.pdf", width = 8, height = 8/1.4)
+d <- ggplot(summary_l_df, aes(x = duration)) + 
+    geom_histogram(binwidth = 10, fill = 'black') + 
+    labs(title = "Distribution of duration", y = "Count", x = "Duration (hours)")
+
+d
+dev.off()
+```
+
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/uni-meanpotential.pdf", width = 8, height = 8/1.4)
+int <- ggplot(potential_l_sum, aes(x = potential_l_mean)) + 
+    geom_histogram(binwidth = 1, fill = 'purple') + 
+    labs(title = "Distribution of average potential intensity", y = "Count", x = "Average potential intensity (knots)")
+
+int
+dev.off()
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/uni-maxshear.pdf", width = 8, height = 8/1.4)
+sh <- ggplot(shear_l_sum, aes(x = shear_l_max)) + 
+    geom_histogram(binwidth = 1, fill = 'blue') + 
+    labs(title = "Distribution of maximum wind shear", y = "Count", x = "Maximum wind shear (knots)")
+
+sh
+dev.off()
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/multi-mvd.pdf", width = 8, height = 8/1.4)
+mv <- ggplot() + 
+    geom_point(aes(x = as.factor(summary_l_df$month_l_mode), y = maximum_speed, color = summary_l_df$duration), alpha = 0.5) + 
+    labs(y = "Maximum wind speed (knots)", x = "Month of occurence", color = "Duration (hours)", 
+         title = "Distribution of maximum wind speed against month of occurence")
+
+mv
+dev.off()
+```
+
+```{r}
+#plot boxplot for average wind speed by year
+pdf(file = "submit/Project progress report B - final/Figure/bi-yv.pdf", width = 8, height = 8/1.4)
+yv <- ggplot() + 
+    geom_boxplot(aes(x = summary_l_df$year_l_mode, y = maximum_speed, group = summary_l_df$year_l_mode)) + 
+    labs(y = "Maximum wind speed (knots)", x = "Year of occurence", title = "Distribution of maximum wind speed by year")
+
+yv
+dev.off()
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/multi-pvd.pdf", width = 8, height = 8/1.4)
+pvd <- ggplot() + 
+    geom_point(aes(x = maximum_speed, y = summary_l_df$pressure_l_min, color = summary_l_df$duration), alpha = 0.5) + 
+    labs(y = "Minimum pressure pressure (mb)", x = "Maximum wind speed (knots)", color = "Duration (hours)", 
+         title = "Minimum pressure plotted againse maximum wind speed")
+
+pvd
+dev.off()
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/multi-lvs.pdf", width = 8, height = 8/1.4)
+lvs <- ggplot() + 
+    geom_point(aes(x = maximum_speed, y = summary_l_df$latitude_l_max, color = summary_l_df$shear_l_mean), alpha = 0.5) + 
+    labs(y = "EMaximum latitude", x = "Maximum wind speed (knots)", color = "Average wind shear (knots)", 
+         title = "Maximum latitude plotted againse maximum wind speed")
+
+lvs
+dev.off()
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/multi-lvi.pdf", width = 8, height = 8/1.4)
+lvi <- ggplot() + 
+    geom_point(aes(x = maximum_speed, y = summary_l_df$longitude_l_min, color = summary_l_df$potential_l_max), alpha = 0.5) + 
+    labs(y = "Minimum longitude", x = "Maximum wind speed (knots)", color = "Maximum potential intensity (knots)", 
+         title = "Minimum longitude plotted againse maximum wind speed")
+
+lvi
+dev.off()
+```
+
+//////////////////////////////// EDA ////////////////////////////////
+
+//////////////////////////////// PRE-MODELLING ////////////////////////////////
+
+```{r}
+#Create variate data set
+#One-hot encoding month (grouped by seasons)
+month_cat <- mapvalues(summary_l_df$month_l_mode, 
+          from = c(3:12), 
+          to = c('b','b','b','c','c','c','d','d','d','a'))
+
+month_cat <- mapvalues(month_cat, 
+          from = c('a','b','c','d'), 
+          to = c(1,2,3,4))
+
+month_cat <- as.factor(month_cat)
+month_cat <- one_hot(as.data.table(month_cat))
+
+summary_nstr_l_df <- cbind(month_cat, latitude_l_sum, longitude_l_sum, potential_l_sum, pressure_l_sum, shear_l_sum, duration)
+```
+
+```{r}
+#Train-test split
+sample <- sample(c(TRUE, FALSE), nrow(summary_nstr_l_df), replace = TRUE, prob = c(0.7, 0.3))
+```
+
+```{r}
+apply(summary_nstr_l_df,2,shapiro.test)
+```
+
+```{r}
+b <- boxcox(lm(maximum_speed ~ 1), plot = FALSE)
+# Exact lambda
+max_speed_lambda <- b$x[which.max(b$y)]
+trans_max_speed <- as.data.frame((maximum_speed ^ max_speed_lambda - 1) / max_speed_lambda)
+
+trans_summary <- as.data.frame(summary_nstr_l_df)
+
+for (i in 5: ncol(trans_summary)){
+    x <- trans_summary[i]
+    b <- boxcox(lm(unlist(x) ~ 1), plot = FALSE)
+    # Exact lambda
+    lambda <- b$x[which.max(b$y)]
+    x <- bxcx(x, lambda, InverseQ = FALSE, type = "BoxCox")
+    trans_summary[i] <- x
+}
+
+x <- summary_l_df[10]
+b <- boxcox(lm(unlist(x) ~ 1), plot = FALSE)
+# Exact lambda
+lambda <- b$x[which.max(b$y)]
+x <- bxcx(x, lambda, InverseQ = FALSE, type = "BoxCox")
+trans_summary[10] <- x
+``` 
+
+```{r}
+apply(trans_summary,2,shapiro.test)
+```
+
+
+```{r}
+write.csv(summary_l_df,"summary_l_df.csv", row.names = FALSE)
+write.csv(trans_summary, "trans_summary.csv", row.names = FALSE)
+```
+
+```{r}
+#train test split
+X_train <- summary_nstr_l_df[sample, ]
+X_test <- summary_nstr_l_df[!sample, ]
+y_train <- maximum_speed[sample]
+y_test <- maximum_speed[!sample]
+
+X_train_t <- trans_summary[sample, ]
+X_test_t <- trans_summary[!sample, ]
+y_train_t <- trans_max_speed[sample, 1]
+```
+
+//////////////////////////////// PRE-MODELLING ////////////////////////////////
+
+
+//////////////////////////////// MODELLING - MAXIMUM SPEED ////////////////////////////////
+
+----------------------------  Linear Regression  ---------------------------
+
+```{r}
+lmmodel_speed <- lm(y_train ~ ., data = X_train)
+#define intercept-only model
+intercept_only <- lm(y_train ~ 1, data = X_train)
+#perform forward stepwise regression
+forward <- stats::step(intercept_only, direction = 'forward', scope = formula(lmmodel_speed), trace = 0)
+summary(forward)
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/lmmodel_diagnose.pdf", width = 8, height = 8/1.4)
+gglm::gglm(forward)
+dev.off()
+```
+
+```{r}
+pred <- predict(forward, X_test)
+mae <- Metrics::mae(pred, y_test)
+mae
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/lmmodel_pred.pdf", width = 8, height = 8/1.4)
+r <- ggplot() +
+        geom_point(aes(x = pred, y = y_test)) +
+        geom_abline(intercept = 0, slope = 1, color = "red", size = 1) + 
+        labs(title = "Observed maximum wind speed against predicted maximum wind speed") +
+        xlab("Predicted values") + ylab("Observed value") + theme(plot.title = element_text(size=15))
+r
+dev.off()
+```
+
+```{r}
+lmmodel_speed_t <- lm(y_train_t ~ ., data = X_train_t)
+#define intercept-only model
+intercept_only <- lm(y_train_t ~ 1, data = X_train_t)
+#perform forward stepwise regression
+forward <- stats::step(intercept_only, direction = 'forward', scope = formula(lmmodel_speed_t), trace = 0)
+summary(forward)
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/lmmodel_t_diagnose.pdf", width = 8, height = 8/1.4)
+gglm::gglm(forward)
+dev.off()
+```
+
+```{r}
+pred <- predict(forward, X_test_t)
+pred <- bxcx(pred, max_speed_lambda, InverseQ = TRUE, type = "BoxCox")
+mae <- Metrics::mae(pred, y_test)
+mae
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/lmmodel_t_pred.pdf", width = 8, height = 8/1.4)
+r <- ggplot() +
+        geom_point(aes(x = pred, y = y_test)) +
+        geom_abline(intercept = 0, slope = 1, color = "red", size = 1) + 
+        labs(title = "Observed maximum wind speed against predicted maximum wind speed with transformed data") +
+        xlab("Predicted values") + ylab("Observed value") + theme(plot.title = element_text(size=12))
+r
+dev.off()
+```
+
+----------------------------  Linear Regression  ---------------------------
+
+----------------------------  Partial Least Squares Regression  ---------------------------
+
+```{r}
+#fit partial least squares model
+pls <- plsr(y_train ~ ., data = X_train, validation = "CV")
+#view summary of model fitting
+summary(pls)
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/pls_rmse.pdf", width = 8, height = 8/1.4)
+#visualize cross-validation plots
+validationplot(pls, main = "Root mean squared error of prediction plotted against number of components", xlab = "Number of components",
+               ylab = "RMSEP", cex.main = 1.2, cex.axis = 1.3, cex.lab = 1.4)
+dev.off()
+pdf(file = "submit/Project progress report B - final/Figure/pls_mse.pdf", width = 8, height = 8/1.4)
+validationplot(pls, val.type = "MSEP", main = "Mean squared error of prediction plotted against number of components", 
+               xlab = "Number of components", ylab = "MSEP", cex.main = 1.3, cex.axis = 1.3, cex.lab = 1.4)
+dev.off()
+pdf(file = "submit/Project progress report B - final/Figure/pls_R2.pdf", width = 8, height = 8/1.4)
+validationplot(pls, val.type = "R2", main = "R-square value plotted against number of components", xlab = "Number of components",
+               ylab = "R-square", cex.main = 1.3, cex.axis = 1.3, cex.lab = 1.4)
+dev.off()
+```
+
+```{r}
+pls_pred <- predict(pls, X_test, ncomp = 3)
+mae <- Metrics::mae(pls_pred, y_test)
+mae
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/pls_model3.pdf", width = 8, height = 8/1.4)
+ggplot() +
+    geom_point(aes(x = pls_pred, y = y_test)) +
+    geom_abline(intercept = 0, slope = 1, color = "red", size = 1) + 
+    labs(title = "Prediction from partial least squares regression with 3 components") +
+    xlab("Predicted values") + ylab("Observed value") + theme(plot.title = element_text(size = 15))
+dev.off()
+```
+
+```{r}
+pls_pred <- predict(pls, X_test, ncomp = 11)
+mae <- Metrics::mae(pls_pred, y_test)
+mae
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/pls_model11.pdf", width = 8, height = 8/1.4)
+r <- ggplot() +
+    geom_point(aes(x = pls_pred, y = y_test)) +
+    geom_abline(intercept = 0, slope = 1, color = "red", size = 1) + 
+    labs(title = "Prediction from partial least squares regression with 11 components") +
+    xlab("Predicted values") + ylab("Observed value") + theme(plot.title = element_text(size = 15))
+r
+dev.off()
+```
+
+
+```{r}
+#fit partial least squares model
+pls_t <- plsr(y_train_t ~ ., data = X_train_t, validation = "CV")
+#view summary of model fitting
+summary(pls_t)
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/pls_t_rmse.pdf", width = 8, height = 8/1.4)
+#visualize cross-validation plots
+validationplot(pls_t, main = "Root mean squared error of prediction plotted against number of components", xlab = "Number of components",
+               ylab = "RMSEP", cex.main = 1.2, cex.axis = 1.3, cex.lab = 1.4)
+dev.off()
+pdf(file = "submit/Project progress report B - final/Figure/pls_t_mse.pdf", width = 8, height = 8/1.4)
+validationplot(pls_t, val.type = "MSEP", main = "Mean squared error of prediction plotted against number of components", 
+               xlab = "Number of components", ylab = "MSEP", cex.main = 1.3, cex.axis = 1.3, cex.lab = 1.4)
+dev.off()
+pdf(file = "submit/Project progress report B - final/Figure/pls_t_R2.pdf", width = 8, height = 8/1.4)
+validationplot(pls_t, val.type = "R2", main = "R-square value plotted against number of components", xlab = "Number of components",
+               ylab = "R-square", cex.main = 1.3, cex.axis = 1.3, cex.lab = 1.4)
+dev.off()
+```
+
+```{r}
+pls_pred <- predict(pls_t, X_test_t, ncomp = 11)
+pls_pred <- bxcx(pls_pred, max_speed_lambda, InverseQ = TRUE, type = "BoxCox")
+mae <- Metrics::mae(pls_pred, y_test)
+mae
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/pls_t_model11.pdf", width = 8, height = 8/1.4)
+ggplot() +
+    geom_point(aes(x = pls_pred, y = y_test)) +
+    geom_abline(intercept = 0, slope = 1, color = "red", size = 1) + 
+    labs(title = "Prediction from partial least squares regression with 11 components and transformed data") +
+    xlab("Predicted values") + ylab("Observed value") + theme(plot.title = element_text(size = 12))
+dev.off()
+```
+
+----------------------------  Partial Least Squares Regression  ---------------------------
+
+----------------------------  Random Forest  ---------------------------
+
+```{r}
+# Create random forest for regression
+max_speed.rf <- ranger(formula = y_train ~ ., data = X_train, num.trees = 500, mtry = floor(length(X_train) / 3))
+print(max_speed.rf)
+```
+```{r}
+rf_predict <- predict(max_speed.rf, X_test)
+#calculate RMSE
+mae <- Metrics::mae(rf_predict$predictions, y_test)
+mae
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/rf_predict.pdf", width = 8, height = 8/1.4)
+r <- ggplot() +
+    geom_point(aes(x = rf_predict$predictions, y = y_test)) +
+    geom_abline(intercept = 0, slope = 1, color = "red", size = 1) + 
+    labs(title = "Prediction from random forest regression") +
+    xlab("Predicted values") + ylab("Observed value") 
+r
+dev.off()
+```
+
+```{r}
+# hyperparameter grid search
+hyper_grid <- expand.grid(
+  mtry       = seq(10, 30, by = 4),
+  node_size  = seq(2, 12, by = 2),
+  sampe_size = c(.40, .55, .70, .85),
+  OOB_RMSE   = 0
+)
+
+# total number of combinations
+nrow(hyper_grid)
+
+for(i in 1:nrow(hyper_grid)) {
+  
+  # train model
+  model <- ranger(
+    formula         = y_train ~ ., 
+    data            = X_train, 
+    num.trees       = 500,
+    mtry            = hyper_grid$mtry[i],
+    min.node.size   = hyper_grid$node_size[i],
+    sample.fraction = hyper_grid$sampe_size[i],
+    seed            = 52
+  )
+  
+  # add OOB error to grid
+  hyper_grid$OOB_RMSE[i] <- sqrt(model$prediction.error)
+}
+
+grid <- hyper_grid %>% 
+        dplyr::arrange(OOB_RMSE) %>%
+        head(10)
+
+grid$OOB_RMSE <- signif(grid$OOB_RMSE, digit = 4)
+
+# Export
+write.table(grid, file = "submit/Project progress report B - final/Figure/rf_hyper_grid.txt", sep = "\t", quote = FALSE, row.names = F)
+```
+
+```{r}
+OOB_RMSE <- vector(mode = "numeric", length = 144)
+
+for(i in seq_along(OOB_RMSE)) {
+
+  optimal_ranger <- ranger(
+    formula         = y_train ~ ., 
+    data            = X_train, 
+    num.trees       = 500,
+    mtry            = 26,
+    min.node.size   = 2,
+    sample.fraction = 0.4,
+    importance      = 'impurity'
+  )
+  
+  OOB_RMSE[i] <- sqrt(optimal_ranger$prediction.error)
+}
+```
+
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/rf_opt_dist.pdf", width = 8, height = 8/1.4)
+ggplot() +
+    geom_histogram(aes(x = OOB_RMSE), bins = 30) +
+    labs(title = "Distribution of root mean square error of the model") +
+    xlab("Root mean square error")
+dev.off()
+```
+
+```{r}
+# Create optimal random forest with results from grid search
+max_speed.rf_opt <- ranger(formula = y_train ~ ., data = X_train, num.trees = 500, mtry = 26, min.node.size = 2, 
+                       sample.fraction = 0.4, importance = 'impurity') 
+print(max_speed.rf_opt)
+```
+
+```{r}
+rf_opt_predict <- predict(max_speed.rf_opt, X_test)
+#calculate RMSE
+mae <- Metrics::mae(rf_opt_predict$predictions, y_test)
+mae
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/rf_opt_predict.pdf", width = 8, height = 8/1.4)
+r <- ggplot() +
+    geom_point(aes(x = rf_opt_predict$predictions, y = y_test)) +
+    geom_abline(intercept = 0, slope = 1, color = "red", size = 1) + 
+    labs(title = "Prediction from fine-tuned random forest regression") +
+    xlab("Predicted values") + ylab("Observed value") 
+r
+dev.off()
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/rf_opt_impt.pdf", width = 8, height = 8/1.4)
+max_speed.rf_opt$variable.importance %>% 
+  tidy() %>%
+  dplyr::arrange(desc(x)) %>%
+  dplyr::top_n(20) %>%
+  ggplot(aes(reorder(names, x), x)) +
+  geom_col() +
+  coord_flip() +
+  ggtitle("Top 20 important variables") + 
+  xlab("Variables") + ylab("Variable importance")
+dev.off()
+```
+
+```{r}
+# hyperparameter grid search
+hyper_grid <- expand.grid(
+  mtry       = seq(4, 28, by = 4),
+  node_size  = seq(2, 10, by = 2),
+  sampe_size = c(.40, .55, .70, .85),
+  OOB_RMSE   = 0
+)
+
+# total number of combinations
+nrow(hyper_grid)
+
+for(i in 1:nrow(hyper_grid)) {
+  
+  # train model
+  model <- ranger(
+    formula         = y_train_t ~ ., 
+    data            = X_train_t, 
+    num.trees       = 500,
+    mtry            = hyper_grid$mtry[i],
+    min.node.size   = hyper_grid$node_size[i],
+    sample.fraction = hyper_grid$sampe_size[i],
+    seed            = 52
+  )
+  
+  # add OOB error to grid
+  hyper_grid$OOB_RMSE[i] <- sqrt(model$prediction.error)
+}
+
+grid <- hyper_grid %>% 
+        dplyr::arrange(OOB_RMSE) %>%
+        head(10)
+
+grid$OOB_RMSE <- signif(grid$OOB_RMSE, digit = 3)
+
+# Export
+write.table(grid, file = "submit/Project progress report B - final/Figure/rf_t_hyper_grid.txt", sep = "\t", quote = FALSE, row.names = F)
+```
+
+```{r}
+# Create optimal random forest with results from grid search
+max_speed.opt_rf_t <- ranger(formula = y_train_t ~ ., data = X_train_t, num.trees = 500, mtry = 28, min.node.size = 6, 
+                       sample.fraction = 0.85, importance = 'impurity') 
+print(max_speed.opt_rf_t)
+```
+
+```{r}
+rf_t_predict <- predict(max_speed.opt_rf_t, X_test_t)
+rf_t_predict <- bxcx(rf_t_predict$predictions, max_speed_lambda, InverseQ = TRUE, type = "BoxCox")
+#calculate RMSE
+mae <- Metrics::mae(rf_t_predict, y_test)
+mae
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/rf_t_opt_predict.pdf", width = 8, height = 8/1.4)
+r <- ggplot() +
+    geom_point(aes(x = rf_t_predict, y = y_test)) +
+    geom_abline(intercept = 0, slope = 1, color = "red", size = 1) + 
+    labs(title = "Prediction from fine-tuned random forest regression with transformed data") +
+    xlab("Predicted values") + ylab("Observed value") 
+r
+dev.off()
+```
+
+----------------------------  Random Forest  ---------------------------
+
+//////////////////////////////// MODELLING - MAXIMUM SPEED ////////////////////////////////
+
+
+//////////////////////////////// PRE-MODELLING ////////////////////////////////
+
+```{r}
+summary_l_df <- cbind(month_cat, latitude_l_sum, longitude_l_sum, potential_l_sum, pressure_l_sum, speed_l_sum, shear_l_sum, duration)
+
+trans_summary <- as.data.frame(summary_l_df)
+
+for (i in 5: ncol(trans_summary)){
+    x <- trans_summary[i]
+    b <- boxcox(lm(unlist(x) ~ 1), plot = FALSE)
+    # Exact lambda
+    lambda <- b$x[which.max(b$y)]
+    x <- bxcx(x, lambda, InverseQ = FALSE, type = "BoxCox")
+    trans_summary[i] <- x
+}
+```
+
+```{r}
+speed <- as.data.frame(speed)
+ri <- integer(nrow(speed))
+for (i in 1:nrow(speed)){
+    row <- i
+    for (j in 12:ncol(speed)){
+        start <- j - 11
+        if (is.na(speed[i,j])){
+            break
+        }
+        else{
+            start = j - 11
+            if(speed[i,start] < speed[i,j]){
+                if((max(speed[i,start:j]) - min(speed[i,start:j])) >= 50){
+                    ri[i] <- 1
+                    break
+                }
+            }
+        }
+    }
+}
+ri_ID <- which(ri == 1)
+summary_l_df$ri <- ri
+trans_summary$ri <- ri
+```
+
+```{r}
+X1 <- subset(summary_l_df, ri == 1) 
+X2 <- subset(summary_l_df, ri == 0) 
+sample1 <- sample(c(TRUE, FALSE), nrow(X1), replace = TRUE, prob = c(0.7, 0.3))
+sample2 <- sample(c(TRUE, FALSE), nrow(X2), replace = TRUE, prob = c(0.7, 0.3))
+
+X1_train <- X1[sample1,]
+X1_test <- X1[!sample1,]
+X2_train <- X2[sample2,]
+X2_test <- X2[!sample2,]
+
+y1_train <- subset(X1_train, select = c(ri))
+y1_test <- subset(X1_test, select = c(ri))
+y2_train <- subset(X2_train, select = c(ri))
+y2_test <- subset(X2_test, select = c(ri))
+
+X1_train <- subset(X1_train, select = -c(ri))
+X2_train <- subset(X2_train, select = -c(ri))
+X1_test <- subset(X1_test, select = -c(ri))
+X2_test <- subset(X2_test, select = -c(ri))
+
+X_train <- rbind(X1_train, X2_train)
+X_test <- rbind(X1_test, X2_test)
+y_train <- rbind(y1_train, y2_train)
+y_test <- rbind(y1_test, y2_test)
+```
+
+```{r}
+X1 <- subset(trans_summary, ri == 1)
+X2 <- subset(trans_summary, ri == 0)
+sample1 <- sample(c(TRUE, FALSE), nrow(X1), replace = TRUE, prob = c(0.7, 0.3))
+sample2 <- sample(c(TRUE, FALSE), nrow(X2), replace = TRUE, prob = c(0.7, 0.3))
+
+X1_train <- X1[sample1,]
+X1_test <- X1[!sample1,]
+X2_train <- X2[sample2,]
+X2_test <- X2[!sample2,]
+
+y1_train <- subset(X1_train, select = c(ri))
+y1_test <- subset(X1_test, select = c(ri))
+y2_train <- subset(X2_train, select = c(ri))
+y2_test <- subset(X2_test, select = c(ri))
+
+X1_train <- subset(X1_train, select = -c(ri))
+X2_train <- subset(X2_train, select = -c(ri))
+X1_test <- subset(X1_test, select = -c(ri))
+X2_test <- subset(X2_test, select = -c(ri))
+
+X_train_t <- rbind(X1_train, X2_train)
+X_test_t <- rbind(X1_test, X2_test)
+y_train_t <- rbind(y1_train, y2_train)
+y_test_t <- rbind(y1_test, y2_test)
+```
+
+//////////////////////////////// PRE-MODELLING ////////////////////////////////
+
+
+//////////////////////////////// MODELLING - RI ////////////////////////////////
+
+----------------------------  Logistic Regression  ---------------------------
+
+```{r}
+#logistic regression with forward stepwise regression
+intercept <- glm(as.factor(y_train$ri) ~ 1, data = X_train, family = binomial(link = "logit"))
+ri_logi <- glm(as.factor(y_train$ri) ~ ., data = X_train, family = binomial(link = "logit"))
+    
+ri_logi <- stats::step(intercept, scope = formula(ri_logi), direction = "forward", data = X_train, trace = 0)
+summary(ri_logi)
+```
+
+```{r}
+#predict ri from logistic model
+probi <- predict(ri_logi, X_test, type = "response")
+pred <- prediction(probi, y_test$ri)
+perf <- performance(pred, "tpr", "fpr")
+
+pdf(file = "submit/Project progress report B - final/Figure/logi_roc.pdf", width = 8, height = 8/1.4)
+plot(perf, colorize = TRUE, main = "Receiver Operating Characteristic (ROC) curve")
+dev.off()
+```
+
+```{r}
+#Get the AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+```
+
+```{r}
+res <- c(ifelse((probi > 0.1)*1, 1, 0))
+t <- tibble("Target" = y_test$ri, "Prediction" = res)
+t <- as_tibble(table(t))
+pdf(file = "submit/Project progress report B - final/Figure/logi_0.1.pdf", width = 8, height = 8/1.4)
+plot_confusion_matrix(t, 
+                      target_col = "Target", 
+                      prediction_col = "Prediction",
+                      counts_col = "n")
+dev.off()
+
+res <- c(ifelse((probi > 0.3)*1, 1, 0))
+t <- tibble("Target" = y_test$ri, "Prediction" = res)
+t <- as_tibble(table(t))
+pdf(file = "submit/Project progress report B - final/Figure/logi_0.3.pdf", width = 8, height = 8/1.4)
+plot_confusion_matrix(t, 
+                      target_col = "Target", 
+                      prediction_col = "Prediction",
+                      counts_col = "n")
+dev.off()
+
+res <- c(ifelse((probi > 0.5)*1, 1, 0))
+t <- tibble("Target" = y_test$ri, "Prediction" = res)
+t <- as_tibble(table(t))
+if (nrow(t) < 4){
+    t <- rbind(t, c(1, 1, 0))
+    t<- rbind(t, c(0, 1, 0))
+}
+pdf(file = "submit/Project progress report B - final/Figure/logi_0.5.pdf", width = 8, height = 8/1.4)
+plot_confusion_matrix(t, 
+                      target_col = "Target", 
+                      prediction_col = "Prediction",
+                      counts_col = "n")
+dev.off()
+```
+
+
+```{r}
+#logistic regression with forward stepwise regression
+intercept <- glm(as.factor(y_train_t$ri) ~ 1, data = X_train_t, family = binomial(link = "logit"))
+ri_logi_t <- glm(as.factor(y_train_t$ri) ~ ., data = X_train_t, family = binomial(link = "logit"))
+    
+ri_logi_t <- stats::step(intercept, scope = formula(ri_logi_t), direction = "forward", test = "Chisq", data = X_train_t, trace = 0)
+summary(ri_logi_t)
+```
+
+```{r}
+#predict ri from logistic model
+probi <- predict(ri_logi_t, X_test_t, type = "response")
+pred <- prediction(probi, y_test_t$ri)
+perf <- performance(pred, "tpr", "fpr")
+
+pdf(file = "submit/Project progress report B - final/Figure/logi_t_roc.pdf", width = 8, height = 8/1.4)
+plot(perf, colorize = TRUE, main = "Receiver Operating Characteristic (ROC) curve")
+dev.off()
+```
+
+```{r}
+#Get the AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+```
+
+```{r}
+res <- c(ifelse((probi > 0.1)*1, 1, 0))
+t <- tibble("Target" = y_test_t$ri, "Prediction" = res)
+t <- as_tibble(table(t))
+pdf(file = "submit/Project progress report B - final/Figure/logi_t_0.1.pdf", width = 8, height = 8/1.4)
+plot_confusion_matrix(t, 
+                      target_col = "Target", 
+                      prediction_col = "Prediction",
+                      counts_col = "n")
+dev.off()
+
+res <- c(ifelse((probi > 0.3)*1, 1, 0))
+t <- tibble("Target" = y_test_t$ri, "Prediction" = res)
+t <- as_tibble(table(t))
+pdf(file = "submit/Project progress report B - final/Figure/logi_t_0.3.pdf", width = 8, height = 8/1.4)
+plot_confusion_matrix(t, 
+                      target_col = "Target", 
+                      prediction_col = "Prediction",
+                      counts_col = "n")
+dev.off()
+
+res <- c(ifelse((probi > 0.5)*1, 1, 0))
+t <- tibble("Target" = y_test_t$ri, "Prediction" = res)
+t <- as_tibble(table(t))
+pdf(file = "submit/Project progress report B - final/Figure/logi_t_0.5.pdf", width = 8, height = 8/1.4)
+plot_confusion_matrix(t, 
+                      target_col = "Target", 
+                      prediction_col = "Prediction",
+                      counts_col = "n")
+dev.off()
+```
+
+----------------------------  logistic regression  ---------------------------
+
+----------------------------  Random Forest  ---------------------------
+
+```{r}
+# Create random forest for regression
+ri.rf <- ranger(formula = as.factor(y_train$ri) ~ ., data = X_train, num.trees = 500, mtry = floor(length(X_train) / 3),
+                classification = TRUE, probability = TRUE)
+print(ri.rf)
+```
+
+```{r}
+#predict ri from rf model
+probi <- predict(ri.rf, X_test, type = "response", verbose = TRUE)
+pred <- prediction(probi$predictions[,2], y_test$ri)
+perf <- performance(pred, "tpr", "fpr")
+
+pdf(file = "submit/Project progress report B - final/Figure/rf_roc.pdf", width = 8, height = 8/1.4)
+plot(perf, colorize = TRUE, main = "Receiver Operating Characteristic (ROC) curve")
+dev.off()
+```
+
+```{r}
+probabilities <- as.data.frame(probi$predictions)
+res <- c(ifelse((probabilities[2] > 0.1), 1, 0))
+t <- tibble("Target" = y_test$ri, "Prediction" = res)
+t <- as_tibble(table(t))
+
+pdf(file = "submit/Project progress report B - final/Figure/rf_0.1.pdf", width = 8, height = 8/1.4)
+plot_confusion_matrix(t, 
+                      target_col = "Target", 
+                      prediction_col = "Prediction",
+                      counts_col = "n")
+dev.off()
+
+res <- c(ifelse((probabilities[2] > 0.3), 1, 0))
+t <- tibble("Target" = y_test$ri, "Prediction" = res)
+t <- as_tibble(table(t))
+
+pdf(file = "submit/Project progress report B - final/Figure/rf_0.3.pdf", width = 8, height = 8/1.4)
+plot_confusion_matrix(t, 
+                      target_col = "Target", 
+                      prediction_col = "Prediction",
+                      counts_col = "n")
+dev.off()
+
+res <- c(ifelse((probabilities[2] > 0.5), 1, 0))
+t <- tibble("Target" = y_test$ri, "Prediction" = res)
+t <- as_tibble(table(t))
+
+pdf(file = "submit/Project progress report B - final/Figure/rf_0.5.pdf", width = 8, height = 8/1.4)
+plot_confusion_matrix(t, 
+                      target_col = "Target", 
+                      prediction_col = "Prediction",
+                      counts_col = "n")
+dev.off()
+```
+
+```{r}
+# hyperparameter grid search
+hyper_grid <- expand.grid(
+  mtry       = seq(4, 32, by = 4),
+  node_size  = seq(2, 10, by = 2),
+  sampe_size = c(.40, .55, .70, .85),
+  OOB_RMSE   = 0
+)
+
+# total number of combinations
+nrow(hyper_grid)
+
+for(i in 1:nrow(hyper_grid)) {
+  
+  # train model
+  model <- ranger(
+    formula         = y_train ~ ., 
+    data            = X_train, 
+    num.trees       = 500,
+    mtry            = hyper_grid$mtry[i],
+    min.node.size   = hyper_grid$node_size[i],
+    sample.fraction = hyper_grid$sampe_size[i],
+    seed            = 52
+  )
+  
+  # add OOB error to grid
+  hyper_grid$OOB_RMSE[i] <- sqrt(model$prediction.error)
+}
+
+grid <-hyper_grid %>% 
+        dplyr::arrange(OOB_RMSE) %>%
+        head(10)
+
+grid$OOB_RMSE <- signif(grid$OOB_RMSE, digit = 4)
+
+# Export
+write.table(grid, file = "submit/Project progress report B - final/Figure/rf_hyper_grid.txt", sep = "\t", quote = FALSE, row.names = F)
+```
+
+```{r}
+# Create random forest for regression
+ri.rf_opt <- ranger(formula = as.factor(y_train$ri) ~ ., data = X_train, num.trees = 500, mtry = 4, min.node.size = 10, sample.fraction = 0.4, 
+                classification = TRUE, probability = TRUE, importance = 'impurity')
+
+print(ri.rf_opt)
+```
+
+```{r}
+#predict ri from rf model
+probi <- predict(ri.rf_opt, X_test, type = "response", verbose = TRUE)
+pred <- prediction(probi$predictions[,2], y_test$ri)
+perf <- performance(pred, "tpr", "fpr")
+
+pdf(file = "submit/Project progress report B - final/Figure/rf_opt_roc.pdf", width = 8, height = 8/1.4)
+plot(perf, colorize = TRUE, main = "Receiver Operating Characteristic (ROC) curve")
+dev.off()
+```
+
+```{r}
+probabilities <- as.data.frame(probi$predictions)
+res <- c(ifelse((probabilities[2] > 0.1), 1, 0))
+t <- tibble("Target" = y_test$ri, "Prediction" = res)
+t <- as_tibble(table(t))
+
+pdf(file = "submit/Project progress report B - final/Figure/rf_opt_0.1.pdf", width = 8, height = 8/1.4)
+plot_confusion_matrix(t, 
+                      target_col = "Target", 
+                      prediction_col = "Prediction",
+                      counts_col = "n")
+dev.off()
+
+res <- c(ifelse((probabilities[2] > 0.3), 1, 0))
+t <- tibble("Target" = y_test$ri, "Prediction" = res)
+t <- as_tibble(table(t))
+
+pdf(file = "submit/Project progress report B - final/Figure/rf_opt_0.3.pdf", width = 8, height = 8/1.4)
+plot_confusion_matrix(t, 
+                      target_col = "Target", 
+                      prediction_col = "Prediction",
+                      counts_col = "n")
+dev.off()
+
+res <- c(ifelse((probabilities[2] > 0.5), 1, 0))
+t <- tibble("Target" = y_test$ri, "Prediction" = res)
+t <- as_tibble(table(t))
+if (nrow(t) < 4){
+    t <- rbind(t, c(1, 1, 0))
+    t<- rbind(t, c(0, 1, 0))
+}
+pdf(file = "submit/Project progress report B - final/Figure/rf_opt_0.5.pdf", width = 8, height = 8/1.4)
+plot_confusion_matrix(t, 
+                      target_col = "Target", 
+                      prediction_col = "Prediction",
+                      counts_col = "n")
+dev.off()
+```
+
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/rf_opt_impt.pdf", width = 8, height = 8/1.4)
+ri.rf_opt$variable.importance %>% 
+  tidy() %>%
+  dplyr::arrange(desc(x)) %>%
+  dplyr::top_n(25) %>%
+  ggplot(aes(reorder(names, x), x)) +
+  geom_col() +
+  coord_flip() +
+  ggtitle("Top 25 important variables") + 
+  xlab("Variables") + ylab("Variable importance")
+dev.off()
+```
+
+
+```{r}
+# hyperparameter grid search
+hyper_grid <- expand.grid(
+  mtry       = seq(4, 32, by = 4),
+  node_size  = seq(2, 10, by = 2),
+  sampe_size = c(.40, .55, .70, .85),
+  OOB_RMSE   = 0
+)
+
+# total number of combinations
+nrow(hyper_grid)
+
+for(i in 1:nrow(hyper_grid)) {
+  
+  # train model
+  model <- ranger(
+    formula         = y_train_t ~ ., 
+    data            = X_train_t, 
+    num.trees       = 500,
+    mtry            = hyper_grid$mtry[i],
+    min.node.size   = hyper_grid$node_size[i],
+    sample.fraction = hyper_grid$sampe_size[i],
+    seed            = 52
+  )
+  
+  # add OOB error to grid
+  hyper_grid$OOB_RMSE[i] <- sqrt(model$prediction.error)
+}
+
+grid <-hyper_grid %>% 
+        dplyr::arrange(OOB_RMSE) %>%
+        head(10)
+
+grid$OOB_RMSE <- signif(grid$OOB_RMSE, digit = 4)
+
+# Export
+write.table(grid, file = "submit/Project progress report B - final/Figure/ri_hyper_grid.txt", sep = "\t", quote = FALSE, row.names = F)
+```
+
+```{r}
+# Create random forest for regression
+ri_t_opt.rf <- ranger(formula = as.factor(y_train_t$ri) ~ ., data = X_train_t, num.trees = 500, mtry = 4, min.node.size = 10, sample.fraction = 0.4, 
+                classification = TRUE, probability = TRUE, importance = 'impurity')
+
+print(ri_t_opt.rf)
+```
+
+```{r}
+#predict ri from rf model
+probi <- predict(ri_t_opt.rf, X_test_t, type = "response", verbose = TRUE)
+pred <- prediction(probi$predictions[,2], y_test_t$ri)
+perf <- performance(pred, "tpr", "fpr")
+
+pdf(file = "submit/Project progress report B - final/Figure/rf_t_opt_roc.pdf", width = 8, height = 8/1.4)
+plot(perf, colorize = TRUE, main = "Receiver Operating Characteristic (ROC) curve")
+dev.off()
+```
+
+```{r}
+probabilities <- as.data.frame(probi$predictions)
+res <- c(ifelse((probabilities[2] > 0.1), 1, 0))
+t <- tibble("Target" = y_test_t$ri, "Prediction" = res)
+t <- as_tibble(table(t))
+
+pdf(file = "submit/Project progress report B - final/Figure/rf_t_opt0.1.pdf", width = 8, height = 8/1.4)
+plot_confusion_matrix(t, 
+                      target_col = "Target", 
+                      prediction_col = "Prediction",
+                      counts_col = "n")
+dev.off()
+
+res <- c(ifelse((probabilities[2] > 0.3), 1, 0))
+t <- tibble("Target" = y_test_t$ri, "Prediction" = res)
+t <- as_tibble(table(t))
+
+pdf(file = "submit/Project progress report B - final/Figure/rf_t_opt0.3.pdf", width = 8, height = 8/1.4)
+plot_confusion_matrix(t, 
+                      target_col = "Target", 
+                      prediction_col = "Prediction",
+                      counts_col = "n")
+dev.off()
+
+res <- c(ifelse((probabilities[2] > 0.5), 1, 0))
+t <- tibble("Target" = y_test_t$ri, "Prediction" = res)
+t <- as_tibble(table(t))
+if (nrow(t) < 4){
+    t <- rbind(t, c(1, 1, 0))
+    t<- rbind(t, c(0, 1, 0))
+}
+
+pdf(file = "submit/Project progress report B - final/Figure/rf_t_opt0.5.pdf", width = 8, height = 8/1.4)
+plot_confusion_matrix(t, 
+                      target_col = "Target", 
+                      prediction_col = "Prediction",
+                      counts_col = "n")
+dev.off()
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/rf_t_opt_impt.pdf", width = 8, height = 8/1.4)
+ri_t_opt.rf$variable.importance %>% 
+  tidy() %>%
+  dplyr::arrange(desc(x)) %>%
+  dplyr::top_n(25) %>%
+  ggplot(aes(reorder(names, x), x)) +
+  geom_col() +
+  coord_flip() +
+  ggtitle("Top 25 important variables") + 
+  xlab("Variables") + ylab("Variable importance")
+dev.off()
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/rf_opt_pri.pdf", width = 8, height = 8/1.4)
+ri_imp1 <- ggplot(data = summary_l_df) + 
+            geom_point((aes(x = pressure_l_mean, y = as.factor(ri), group = ri))) + 
+            labs(y = "Presence or absence of rapid intensification", x = "Average pressure (mb)", 
+                 title = "Relationships between occurence of rapid intensification and average pressure")
+
+ri_imp1
+dev.off()
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/rf_opt_vri.pdf", width = 8, height = 8/1.4)
+ri_imp2 <- ggplot(data = summary_l_df) + 
+            geom_point((aes(x = speed_l_mean, y = as.factor(ri), group = ri))) + 
+            labs(y = "Presence or absence of rapid intensification", x = "Average wind speed (knots)", 
+                 title = "Relationships between occurence of rapid intensification and average wind speed")
+
+ri_imp2
+dev.off()
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/rf_opt_sri.pdf", width = 8, height = 8/1.4)
+ri_imp3 <- ggplot(data = summary_l_df) + 
+            geom_point((aes(x = shear_l_mean, y = as.factor(ri), group = ri))) + 
+            labs(y = "Presence or absence of rapid intensification", x = "Average wind shear (knots)", 
+                 title = "Relationships between occurence of rapid intensification and average wind shear")
+
+ri_imp3
+dev.off()
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/rf_opt_pminri.pdf", width = 8, height = 8/1.4)
+ri_imp4 <- ggplot(data = summary_l_df) + 
+            geom_point((aes(x = pressure_l_min, y = as.factor(ri), group = ri))) + 
+            labs(y = "Presence or absence of rapid intensification", x = "Minimum pressure (mb))", 
+                 title = "Relationships between occurence of rapid intensification and minimum pressure")
+
+ri_imp4
+dev.off()
+
+```
+
+```{r}
+pdf(file = "submit/Project progress report B - final/Figure/rf_opt_lri.pdf", width = 8, height = 8/1.4)
+ri_imp5 <- ggplot(data = summary_l_df) + 
+            geom_point((aes(x = latitude_l_max, y = as.factor(ri), group = ri))) + 
+            labs(y = "Presence or absence of rapid intensification", x = "Maximum latitude", 
+                 title = "Relationships between occurence of rapid intensification and maximum latitude")
+
+ri_imp5
+dev.off()
+```
+
+```{r}
+write.csv(summary_l_df,"summary_l_df.csv", row.names = FALSE)
+write.csv(trans_summary, "trans_summary.csv", row.names = FALSE)
+```
+
+----------------------------  Random forest  ---------------------------
+
+///////////////////////////////// MODELLING ////////////////////////////////////
