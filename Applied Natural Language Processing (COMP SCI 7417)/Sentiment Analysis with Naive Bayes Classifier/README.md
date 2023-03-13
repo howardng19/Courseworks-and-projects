@@ -3,11 +3,11 @@
 ## Task
 A sentiment analysis system was built based on the Naïve Bayes classifier. Specifically, the tasks were:
 
-• 1. Wrote code to read data from the dataset file and perform text pre-processing. The text-processing methods were up to my choice. At least two text-processing steps were applied, e.g., stop words removal and stemming.
+1. Wrote code to read data from the dataset file and perform text pre-processing. The text-processing methods were up to my choice. At least two text-processing steps were applied, e.g., stop words removal and stemming.
 
-• 2. Wrote code to build the Naïve Bayes classifier from the training set and evaluate its performance on the test set with F1 measure.
+2. Wrote code to build the Naïve Bayes classifier from the training set and evaluate its performance on the test set with F1 measure.
 
-• 3. Investigated the impact of different factors in the pipeline of building the classification system. Conducted experiment to examine the impact of using add-k smoothing and interpolation for building the Naïve Bayes classifier. At least two factors were investigated. 
+3. Investigated the impact of different factors in the pipeline of building the classification system. Conducted experiment to examine the impact of using add-k smoothing and interpolation for building the Naïve Bayes classifier. At least two factors were investigated. 
 
 ## Requirements
 The code was written Python using Jupyter Notebook ("anlp1.ipynb"). 
