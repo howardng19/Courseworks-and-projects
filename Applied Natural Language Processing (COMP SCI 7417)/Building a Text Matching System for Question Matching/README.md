@@ -1,7 +1,7 @@
 # Building a Text Matching System for Question Matching
 
 ## Task
-A text retrieval/question matching system to matching similar questions was built based on both TFIDF
+A text retrieval/question matching system to matching similar questions was built based on both TF/IDF
 (with inverted file) and word embeddings. The tasks included:
 
 1. Wrote code for data loading and text preprocessing.
