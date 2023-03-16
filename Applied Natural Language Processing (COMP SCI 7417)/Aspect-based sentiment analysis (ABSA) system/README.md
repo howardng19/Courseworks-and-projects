@@ -15,7 +15,7 @@ An aspect-based sentiment analysis (ABSA) system was built based on syntactic pa
 
 2. Designed a system to predict the three possible sentiment polarities: positive, negative and neutral with respect to the aspect term.
 
-3. Defined 3 rules for each of the sentiment based on syntactic parsing results to achieve the sentiment prediction.
+3. Defined 3 rules for each of the sentiment based on syntactic parsing results to achieve the sentiment prediction. In specific, to predict positive and negative sentiment, the following rules were applied: (a) The polarity of the adjective closet to the aspect term; (b) Finding negation of adjective with negative (positive) polarity; (c) The polarity of the adjective that is attached to an adverb. For neutral sentiment, the following rules were applied: (a) No adjective or adjective with neutral polarity was in the review; (b) Negation of negative adjective; (c) The average polarity score.
 
 ## Requirements
 The code was written Python using Jupyter Notebook ("anlp3.ipynb"). 
