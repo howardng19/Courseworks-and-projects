@@ -2,7 +2,7 @@
 
 This project aimed to build a prediction model which is capable to classify the species of a plant from a photo. Near 5,000 images of plants belonging to 12 species were provided as training data. The images were preprocessed with Gaussian Blur and color mask before feeding into the models. Six Convolutional Neural Network models were selected and trained to perform the task. 
 
-1. A CNN model build from scratch 
+1. A CNN model built from scratch 
 2. VGG16
 3. ResNet50
 4. Inception-v3
