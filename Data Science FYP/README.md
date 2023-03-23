@@ -23,3 +23,16 @@ Regression model and Random Forest Classification model.
 ./hurricane_data/ : The original data provided in .csv
 
 ./hurricane_data_analysis.Rmd : The script for data analysis and modelling written in R language (run in RStudio)
+
+## Overview
+
+### The data
+
+The data was provided by WindRiskTech. According to their website, the data were recorded every two hours, and the original dataset consists of the following data as separate files: 1. Day, 2. Hour, 3. Month, 4. Year, 5. Latitude, 6. Longitude, 7. Pressure, 8. Wind speed, 9. Wind shear, 10. Potential intensity. Duration was added as an extra features.
+Only those hurricanes with maximum wind speed >= 50 knots were examined in this project.
+
+### Methodology
+
+An exploratory data analysis is first conducted with the dataset, such as cleaning the data, creating a summary dataframe of the dataset and visualising the relationships between variables. With the summary dataframe and the exploratory data analysis as a guide, the maximum wind speed and the presence or absence of rapid intensification of storms are modelled with varied methods. 
+
+The assumptions and theories of all models implemented were discussed. In particular, Linear Regression model, Partial Least Squares Regression model and Random Forest Regression model were implemented to predict the maximum wind speed, while Logistic Regression model and Random Forest Classification model were used for predicting the absences or presence of rapid intensification.
